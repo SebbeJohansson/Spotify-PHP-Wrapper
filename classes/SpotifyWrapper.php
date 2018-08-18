@@ -20,6 +20,7 @@
         public $validUntil;
 
         public $currentPlayBack;
+        public $recentlyPlayed;
 
         protected $lastHTTPCode;
 
@@ -165,6 +166,24 @@
             return $array['devices'];
         }
 
+        /**
+         * Get all the recentplayed tracks.
+         *
+         * @param int $limit - Limit the number of returned tracks.
+         * @param int $before - Get all tracks played before a certain UNIX timestamp in microseconds. Can not be used with $after.
+         * @param int $after - Get all tracks played after a certain UNIX timestamp in microseconds. Can not be used with $before.
+         */
+        function getRecentlyPlayedTracks($limit = 50, $before = null, $after = null){
+            if($after != null){
+                $after = "&after=".$after;
+            }elseif($before != null){
+                $before = "&before=".$before;
+            }
+
+            $array = $this->executeCURL("https://api.spotify.com/v1/me/player/recently-played?limit=$limit".$after.$before, array("Authorization: Bearer $this->accessToken"), "GET");
+            $this->recentlyPlayed = $array;
+        }
+
 
         /**
          * Play songs based on spotify uris.
@@ -214,6 +233,25 @@
             }
         }
 
+
+        /**
+         * Toggles the playback state.
+         *
+         * @param string $device_id - (Optional) The device id for the device to start the playback on. No deviceid = active device control.
+         */
+        function togglePlayback($device_id = null){
+            if(isset($this->currentPlayBack['is_playing'])){
+                if($this->currentPlayBack['is_playing']){
+                    $this->stopPlayback($device_id);
+                }else{
+                    $this->startPlayback($device_id);
+                }
+            }else{
+                $this->setCurrentPlayback();
+                $this->togglePlayback($device_id);
+            }
+        }
+
         /**
          * Resume playback on device.
          *
@@ -224,7 +262,6 @@
                 $device_id = "?device_id=".$device_id;
             }
             $array = $this->executeCURL("https://api.spotify.com/v1/me/player/play$device_id", array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "PUT");
-            var_dump($array);
 
             if(isset($array['error'])){
                 $this->ajaxResponse['successful'] = false;
@@ -320,7 +357,7 @@
         /**
          * Set shuffle to a specific mode (yes/no).
          *
-         * @param bool $shuffle_mode
+         * @param bool $shuffle_mode - On or off.
          * @param string $device_id - (Optional) The device id for the device to stop the playback on. No deviceid = active device control.
          */
         function setShuffle($shuffle_mode, $device_id = null){
@@ -330,7 +367,6 @@
             $shuffle_mode = ($shuffle_mode) ? 'true' : 'false';
             $array = $this->executeCURL("https://api.spotify.com/v1/me/player/shuffle?state=$shuffle_mode".$device_id, array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "PUT");
 
-            echo $this->lastHTTPCode;
             if($this->lastHTTPCode == 204){
                 $this->ajaxResponse['successful'] = true;
                 $this->ajaxResponse['statusmessage'] = "Changed shuffle to $shuffle_mode.";
@@ -341,6 +377,77 @@
             }
 
         }
+
+        /**
+         * Change repeat mode to the next one. Similar to how the official spotify program does it.
+         * Might be a tad unstable.
+         *
+         * @param string $device_id - (Optional) The device id for the device to stop the playback on. No deviceid = active device control.
+         */
+        function toggleRepeat($device_id = null){
+            $modes = array("off", "context", "track");
+
+            if(isset($this->currentPlayBack['repeat_state'])){
+                $current_mode = array_search($this->currentPlayBack['repeat_state'], $modes);
+
+                if($current_mode >= (count($modes) - 1)){
+                    $this->setRepeat($modes[0], $device_id);
+                }else{
+                    $this->setRepeat($modes[$current_mode+1], $device_id);
+                }
+            }else{
+                $this->setCurrentPlayback();
+                $this->toggleRepeat($device_id);
+            }
+        }
+
+        /**
+         *
+         * Set repeat mode to a specific mode. "track", "context", or "off".
+         *
+         * @param string $repeat_mode
+         * @param string $device_id - (Optional) The device id for the device to stop the playback on. No deviceid = active device control.
+         */
+        function setRepeat($repeat_mode, $device_id = null){
+            if($device_id != null){
+                $device_id = "&device_id=".$device_id;
+            }
+            $array = $this->executeCURL("https://api.spotify.com/v1/me/player/repeat?state=$repeat_mode".$device_id, array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "PUT");
+
+            if($this->lastHTTPCode == 204){
+                $this->ajaxResponse['successful'] = true;
+                $this->ajaxResponse['statusmessage'] = "Changed repeat mode to $repeat_mode.";
+            }else{
+                $this->ajaxResponse['successful'] = false;
+                $this->ajaxResponse['statusmessage'] = "No result to request.";
+                ($this->lastHTTPCode == 404) ? $this->ajaxResponse['statusmessage'][] = "Device not found." : $this->lastHTTPCode;
+            }
+        }
+
+
+        /**
+         * Set the playback to a specific position. If position is greater than track length function skips to next song.
+         *
+         * @param int $position - Playback position in microseconds.
+         * @param string $device_id - (Optional) The device id for the device to stop the playback on. No deviceid = active device control.
+         */
+        function setPlaybackPosition($position, $device_id = null){
+            if($device_id != null){
+                $device_id = "&device_id=".$device_id;
+            }
+            $array = $this->executeCURL("https://api.spotify.com/v1/me/player/seek?position_ms=$position".$device_id, array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "PUT");
+
+            if($this->lastHTTPCode == 204){
+                $this->ajaxResponse['successful'] = true;
+                $this->ajaxResponse['statusmessage'] = "Set playback to $position microseconds into the track.";
+            }else{
+                $this->ajaxResponse['successful'] = false;
+                $this->ajaxResponse['statusmessage'] = "No result to request.";
+                ($this->lastHTTPCode == 404) ? $this->ajaxResponse['statusmessage'][] = "Device not found." : $this->lastHTTPCode;
+            }
+        }
+
+
 
 
     }
