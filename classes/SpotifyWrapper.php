@@ -8,8 +8,8 @@
      */
     class SpotifyWrapper{
 
-
-        public $ajaxResponse = array('successful' => false, 'errors' => array(), 'statusmessage' => "", 'variables' => array());
+        // Response to be used when using for example ajax.
+        public $response = array('successful' => false, 'errors' => array(), 'status_message' => "", 'variables' => array());
 
         public $encryptedSecret;
         public $encodedRedirect;
@@ -53,16 +53,16 @@
             $array = $this->executeCURL("https://accounts.spotify.com/api/token", array("Authorization: Basic $this->encryptedSecret", "Content-Type: application/x-www-form-urlencoded"), "POST", "grant_type=authorization_code&code=$this->code&redirect_uri=$this->encodedRedirect"); //
 
             if(isset($array['error'])){
-                $this->ajaxResponse['successful'] = false;
-                $this->ajaxResponse['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
-                (isset($array['error_description'])) ? $this->ajaxResponse['errors'][] = $array['error_description'] : $array['error'];
+                $this->response['successful'] = false;
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
             }else{
                 $this->accessToken = $array['access_token'];
                 $this->refreshToken = $array['refresh_token'];
                 $this->validUntil = time() + 3600;
 
-                $this->ajaxResponse['successful'] = true;
-                $this->ajaxResponse['statusmessage'] = "Token set.";
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Token set.";
             }
         }
 
@@ -73,15 +73,15 @@
             $array = $this->executeCURL("https://accounts.spotify.com/api/token", array("Authorization: Basic $this->encryptedSecret", "Content-Type: application/x-www-form-urlencoded"), "POST", "grant_type=refresh_token&refresh_token=$this->refreshToken");
 
             if(isset($array['error'])){
-                $this->ajaxResponse['successful'] = false;
-                $this->ajaxResponse['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
-                 (isset($array['error_description'])) ? $this->ajaxResponse['errors'][] = $array['error_description'] : $array['error'];
+                $this->response['successful'] = false;
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                 (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
             }else{
                 $this->accessToken = $array['access_token'];
                 $this->validUntil = time() + 3600;
 
-                $this->ajaxResponse['successful'] = true;
-                $this->ajaxResponse['statusmessage'] = "Refreshed Token.";
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Refreshed Token.";
             }
         }
 
@@ -94,6 +94,7 @@
 
         /**
          * Execute a cURL call.
+         * Prefered to only do one cURL call which might result in a prefered httpcode per request.
          *
          * @param string $url
          * @param array $header An array of headers.
@@ -112,14 +113,15 @@
             $content = curl_exec($curl);
             $this->lastHTTPCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
             $array = json_decode($content, true);
+            $this->response['variables']['http_response'] = $this->lastHTTPCode;
             if(isset($array['error']['status']) && $array['error']['status'] == 401){
-                $this->ajaxResponse['successful'] = false;
-                $this->ajaxResponse['errors'][] = "Missing permissions.";
-                $this->ajaxResponse['statusmessage'] = "You do not have permissions to do this. (Wrong scope?)";
+                $this->response['successful'] = false;
+                $this->response['errors'][] = "Missing permissions.";
+                $this->response['status_message'] = "You do not have permissions to do this. (Wrong scope?)";
             }
 
             if($this->lastHTTPCode == 405){
-                $this->ajaxResponse['errors'][] = "The endpoint $url does not support $mode.";
+                $this->response['errors'][] = "The endpoint $url does not support $mode.";
             }
             return $array;
         }
@@ -132,8 +134,8 @@
                 if($this->isTokenExpired()){
                     $this->refreshToken();
                 }else{
-                    $this->ajaxResponse['successful'] = true;
-                    $this->ajaxResponse['statusmessage'] = "Token is still valid.";
+                    $this->response['successful'] = true;
+                    $this->response['status_message'] = "Token is still valid.";
                 }
             }else{
                 $this->setToken();
@@ -148,12 +150,47 @@
 
         /* PLAYBACK FUNCTIONS */
 
+
         /**
-         *  Sets "currentPlayBack" variable to the current state of user playback.
+         * Sets "currentPlayBack" variable to the current state of user playback.
+         *
+         * @return array - Returns currentPlayback Object.
          */
         function setCurrentPlayback(){
             $array = $this->executeCURL("https://api.spotify.com/v1/me/player", array("Authorization: Bearer $this->accessToken"), "GET");
             $this->currentPlayBack = $array;
+            return $array;
+        }
+
+
+        /**
+         * Transfers the playback to a specific device based on its id.
+         *
+         * @param string $device_id - ONE device id which playback should be transfered to. NOTE: Current api doc asks for array.
+         * @param bool $play_mode - Specifices if device should be playing or not. False = Keeps state of last playback.
+         */
+        function transferCurrentPlayback($device_id, $play_mode = null){
+            $postfields = json_encode(array('device_ids' => array($device_id), 'play' => $play_mode));
+
+            $array = $this->executeCURL("https://api.spotify.com/v1/me/player", array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "PUT", $postfields);
+
+            switch ($this->lastHTTPCode){
+                case 204:
+                    $this->response['successful'] = true;
+                    $this->response['status_message'] = "Playback changed to device = $device_id";
+
+                    break;
+                case 404:
+                    $this->response['successful'] = false;
+                    $this->response['status_message'] = "Device not found.";
+
+                    break;
+                default:
+                    $this->response['successful'] = false;
+                    $this->response['status_message'] = "Unspecified http-code. Result unsure.";
+
+                    break;
+            }
         }
 
         /**
@@ -221,15 +258,15 @@
             $array = $this->executeCURL("https://api.spotify.com/v1/me/player/play$device_id", array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "PUT", $postfields);
 
             if(isset($array['error'])){
-                $this->ajaxResponse['successful'] = false;
-                $this->ajaxResponse['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
-                (isset($array['error_description'])) ? $this->ajaxResponse['errors'][] = $array['error_description'] : $array['error'];
+                $this->response['successful'] = false;
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
 
-                (isset($array['error']['status']) && $array['error']['status'] == 404) ? $this->ajaxResponse['statusmessage'][] = "Device not found." : $array['error'];
+                (isset($array['error']['status']) && $array['error']['status'] == 404) ? $this->response['status_message'] = "Device not found." : $array['error'];
             }else{
-                $this->ajaxResponse['successful'] = true;
+                $this->response['successful'] = true;
                 $songs = implode(" & ", $spotify_uris);
-                $this->ajaxResponse['statusmessage'] = "Songs added to queue: $songs";
+                $this->response['status_message'] = "Songs added to queue: $songs";
             }
         }
 
@@ -264,14 +301,14 @@
             $array = $this->executeCURL("https://api.spotify.com/v1/me/player/play$device_id", array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "PUT");
 
             if(isset($array['error'])){
-                $this->ajaxResponse['successful'] = false;
-                $this->ajaxResponse['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
-                (isset($array['error_description'])) ? $this->ajaxResponse['errors'][] = $array['error_description'] : $array['error'];
+                $this->response['successful'] = false;
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
 
-                (isset($array['error']['status']) && $array['error']['status'] == 404) ? $this->ajaxResponse['statusmessage'][] = "Device not found." : $array['error'];
+                (isset($array['error']['status']) && $array['error']['status'] == 404) ? $this->response['status_message'] = "Device not found." : $array['error'];
             }else{
-                $this->ajaxResponse['successful'] = true;
-                $this->ajaxResponse['statusmessage'] = "Started Playback.";
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Started Playback.";
             }
         }
 
@@ -287,14 +324,14 @@
             $array = $this->executeCURL("https://api.spotify.com/v1/me/player/pause$device_id", array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "PUT");
 
             if(isset($array['error'])){
-                $this->ajaxResponse['successful'] = false;
-                $this->ajaxResponse['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
-                (isset($array['error_description'])) ? $this->ajaxResponse['errors'][] = $array['error_description'] : $array['error'];
+                $this->response['successful'] = false;
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
 
-                (isset($array['error']['status']) && $array['error']['status'] == 404) ? $this->ajaxResponse['statusmessage'][] = "Device not found." : $array['error'];
+                (isset($array['error']['status']) && $array['error']['status'] == 404) ? $this->response['status_message'] = "Device not found." : $array['error'];
             }else{
-                $this->ajaxResponse['successful'] = true;
-                $this->ajaxResponse['statusmessage'] = "Stopped Playback.";
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Stopped Playback.";
             }
         }
 
@@ -310,12 +347,12 @@
             $array = $this->executeCURL("https://api.spotify.com/v1/me/player/next$device_id", array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "POST");
 
             if($this->lastHTTPCode == 204){
-                $this->ajaxResponse['successful'] = true;
-                $this->ajaxResponse['statusmessage'] = "Skipped to next song.";
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Skipped to next song.";
             }else{
-                $this->ajaxResponse['successful'] = false;
-                $this->ajaxResponse['statusmessage'] = "No result to request.";
-                ($this->lastHTTPCode == 404) ? $this->ajaxResponse['statusmessage'][] = "Device not found." : $this->lastHTTPCode;
+                $this->response['successful'] = false;
+                $this->response['status_message'] = "No result to request.";
+                ($this->lastHTTPCode == 404) ? $this->response['status_message'] = "Device not found." : $this->lastHTTPCode;
             }
         }
 
@@ -331,12 +368,12 @@
             $array = $this->executeCURL("https://api.spotify.com/v1/me/player/previous$device_id", array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "POST");
 
             if($this->lastHTTPCode == 204){
-                $this->ajaxResponse['successful'] = true;
-                $this->ajaxResponse['statusmessage'] = "Skipped to previous song.";
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Skipped to previous song.";
             }else{
-                $this->ajaxResponse['successful'] = false;
-                $this->ajaxResponse['statusmessage'] = "No result to request.";
-                ($this->lastHTTPCode == 404) ? $this->ajaxResponse['statusmessage'][] = "Device not found." : $this->lastHTTPCode;
+                $this->response['successful'] = false;
+                $this->response['status_message'] = "No result to request.";
+                ($this->lastHTTPCode == 404) ? $this->response['status_message'] = "Device not found." : $this->lastHTTPCode;
             }
         }
 
@@ -368,12 +405,12 @@
             $array = $this->executeCURL("https://api.spotify.com/v1/me/player/shuffle?state=$shuffle_mode".$device_id, array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "PUT");
 
             if($this->lastHTTPCode == 204){
-                $this->ajaxResponse['successful'] = true;
-                $this->ajaxResponse['statusmessage'] = "Changed shuffle to $shuffle_mode.";
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Changed shuffle to $shuffle_mode.";
             }else{
-                $this->ajaxResponse['successful'] = false;
-                $this->ajaxResponse['statusmessage'] = "No result to request.";
-                ($this->lastHTTPCode == 404) ? $this->ajaxResponse['statusmessage'][] = "Device not found." : $this->lastHTTPCode;
+                $this->response['successful'] = false;
+                $this->response['status_message'] = "No result to request.";
+                ($this->lastHTTPCode == 404) ? $this->response['status_message'] = "Device not found." : $this->lastHTTPCode;
             }
 
         }
@@ -415,12 +452,12 @@
             $array = $this->executeCURL("https://api.spotify.com/v1/me/player/repeat?state=$repeat_mode".$device_id, array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "PUT");
 
             if($this->lastHTTPCode == 204){
-                $this->ajaxResponse['successful'] = true;
-                $this->ajaxResponse['statusmessage'] = "Changed repeat mode to $repeat_mode.";
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Changed repeat mode to $repeat_mode.";
             }else{
-                $this->ajaxResponse['successful'] = false;
-                $this->ajaxResponse['statusmessage'] = "No result to request.";
-                ($this->lastHTTPCode == 404) ? $this->ajaxResponse['statusmessage'][] = "Device not found." : $this->lastHTTPCode;
+                $this->response['successful'] = false;
+                $this->response['status_message'] = "No result to request.";
+                ($this->lastHTTPCode == 404) ? $this->response['status_message'] = "Device not found." : $this->lastHTTPCode;
             }
         }
 
@@ -438,16 +475,303 @@
             $array = $this->executeCURL("https://api.spotify.com/v1/me/player/seek?position_ms=$position".$device_id, array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "PUT");
 
             if($this->lastHTTPCode == 204){
-                $this->ajaxResponse['successful'] = true;
-                $this->ajaxResponse['statusmessage'] = "Set playback to $position microseconds into the track.";
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Set playback to $position microseconds into the track.";
             }else{
-                $this->ajaxResponse['successful'] = false;
-                $this->ajaxResponse['statusmessage'] = "No result to request.";
-                ($this->lastHTTPCode == 404) ? $this->ajaxResponse['statusmessage'][] = "Device not found." : $this->lastHTTPCode;
+                $this->response['successful'] = false;
+                $this->response['status_message'] = "No result to request.";
+                ($this->lastHTTPCode == 404) ? $this->response['status_message'] = "Device not found." : $this->lastHTTPCode;
+            }
+        }
+
+        /**
+         * Set the playback volume to a specfic percentage.
+         *
+         * @param int $volume - Requested volume in percentage (0-100) in int.
+         * @param string $device_id - (Optional) The device id for the device to stop the playback on. No deviceid = active device control.
+         */
+        function setPlaybackVolume($volume, $device_id = null){
+            if($device_id != null){
+                $device_id = "&device_id=".$device_id;
+            }
+            $array = $this->executeCURL("https://api.spotify.com/v1/me/player/volume?volume_percent=$volume".$device_id, array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "PUT");
+
+            switch ($this->lastHTTPCode){
+                case 204:
+                    if($volume > 100){
+                        $this->response['successful'] = false;
+                        $this->response['status_message'] = "Changed volume to $volume%.";
+                    }else{
+                        $this->response['successful'] = true;
+                        $this->response['status_message'] = "Changed volume to $volume%.";
+                    }
+
+                    break;
+                case 404:
+                    $this->response['successful'] = false;
+                    $this->response['status_message'] = "Device not found.";
+
+                    break;
+                default:
+                    $this->response['successful'] = false;
+                    if($volume > 100){
+                        $this->response['status_message'] = "Specified volume is too high (>100).";
+                    }else{
+                        $this->response['status_message'] = "Unspecified http-code. Result unsure.";
+                    }
+
+                    break;
             }
         }
 
 
+        /* ALBUM FUNCTIONS */
+
+        /**
+         * Get a specific album array based on album id.
+         *
+         * @param string $album_id
+         * @return array|null - Returns album array. If no album array was found NULL is returned.
+         */
+        function getAlbum($album_id, $market = null){
+            if($market != null){
+                $market = "?market=".$market;
+            }
+            $array = $this->executeCURL("https://api.spotify.com/v1/albums/$album_id".$market, array("Authorization: Bearer $this->accessToken"), "GET");
+
+            if(isset($array['error'])){
+                $this->response['successful'] = false;
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                return null;
+            }else{
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Successfully returned album array.";
+                return $array;
+            }
+        }
+
+        /**
+         * Get all tracks from a specific album based on album id.
+         *
+         * @param string $album_id
+         * @param string $market - Market iso. Decides what market to pull data from.
+         * @return array|null - Returns album array. If no album tracks was found NULL is returned.
+         */
+        function getAlbumTracks($album_id, $market = null){
+            if($market != null){
+                $market = "?market=".$market;
+            }
+            $tracks = array();
+
+            // Initial tracks (first 20).
+            $array = $this->executeCURL("https://api.spotify.com/v1/albums/$album_id/tracks".$market, array("Authorization: Bearer $this->accessToken"), "GET");
+
+            if(isset($array['error'])){
+                $this->response['successful'] = false;
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                return null;
+            }else{
+
+                $tracks = array_merge($tracks, $array['items']);
+                if($array['total'] > 20){
+                    $left = $array['total'] - 20;
+
+                    while($left > 0){
+                        $array = $this->executeCURL($array['next'], array("Authorization: Bearer $this->accessToken"), "GET");
+                        $tracks = array_merge($tracks, $array['items']);
+                        $left -= 20;
+                    }
+
+                }
+
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Successfully returned album tracks.";
+                return $tracks;
+            }
+        }
+
+        /**
+         * Get album arrays from multiple albums.
+         *
+         * @param array $album_ids
+         * @param string $market - Market iso. Decides what market to pull data from.
+         * @return  array|null - Returns album arrays (one for each returned album). If one or more album ids are invalid their array is NULL in returned array.
+         */
+        function getMultipleAlbums($album_ids, $market = null){
+            if($market != null){
+                $market = "&market=".$market;
+            }
+
+            $album_ids = implode(",", $album_ids);
+
+            $array = $this->executeCURL("https://api.spotify.com/v1/albums/?ids=$album_ids".$market, array("Authorization: Bearer $this->accessToken"), "GET");
+
+            if(isset($array['error'])){
+                $this->response['successful'] = false;
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                return null;
+            }else{
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Successfully returned album arrays.";
+                foreach($array['albums'] as $album){
+                    if($album == NULL){
+                        $this->response['status_message'] = "One or more album ids returned NULL. Use data with caution.";
+                        break;
+                    }
+                }
+                return $array['albums'];
+            }
+
+        }
+
+
+        /* ARTIST FUNCTIONS */
+
+        /**
+         * Get a specific artist array based on artist id.
+         *
+         * @param string $artist_id
+         * @return array|null - Returns artist array. If no artist array was found NULL is returned.
+         */
+        function getArtist($artist_id){
+            $array = $this->executeCURL("https://api.spotify.com/v1/artists/$artist_id", array("Authorization: Bearer $this->accessToken"), "GET");
+
+            if(isset($array['error'])){
+                $this->response['successful'] = false;
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                return null;
+            }else{
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Successfully returned album array.";
+                return $array;
+            }
+        }
+
+        /**
+         * Get all albums for specific artist.
+         *
+         * @param string $artist_id
+         * @param array $types - Array of album types to return.
+         * @param string $market - Market iso. Decides what market to pull data from.
+         * @return array|null - Returns artist albums. If no artist array was found NULL is returned. If no albums was found return is successfull but an empty array is returned.
+         */
+        function getArtistAlbums($artist_id, $types = null, $market = null){
+            if($market != null){
+                $market = "&market=".$market;
+            }
+            $albums = array();
+
+            //var_dump($types);
+            if($types != null){
+                $types = "&include_groups=".implode(",", $types);
+            }
+
+            // Initial albums (first 20).
+            $array = $this->executeCURL("https://api.spotify.com/v1/artists/$artist_id/albums?limit=20".$market.$types, array("Authorization: Bearer $this->accessToken"), "GET");
+
+            if(isset($array['error']) || $this->lastHTTPCode == 404){
+                $this->response['successful'] = false;
+                $this->response['status_message'] = "No artist albums returned.";
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                return null;
+            }else{
+                $albums = array_merge($albums, $array['items']);
+                if($array['total'] > 20){
+                    $left = $array['total'] - 20;
+
+                    while($left > 0){
+                        $array = $this->executeCURL($array['next'], array("Authorization: Bearer $this->accessToken"), "GET");
+                        $albums = array_merge($albums, $array['items']);
+                        $left -= 20;
+                    }
+
+                }
+
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Successfully returned artists albums.";
+                if(count($albums) <= 0){
+                    $this->response['status_message'] = "No albums was found for artist id: $artist_id with the specified groups.";
+                }
+                return $albums;
+            }
+        }
+
+        /**
+         * Get all top tracks from artist.
+         *
+         * @param string $artist_id
+         * @param string $market - Market iso. Decides what market to pull data from.
+         * @return array|null - Tracks array or NULL if no tracks was returned.
+         */
+        function getArtistTopTracks($artist_id, $market){
+            $array = $this->executeCURL("https://api.spotify.com/v1/artists/$artist_id/top-tracks?market=".$market, array("Authorization: Bearer $this->accessToken"), "GET");
+
+            if(isset($array['error'])){
+                $this->response['successful'] = false;
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                return null;
+            }else{
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Successfully returned album array.";
+                return $array['tracks'];
+            }
+        }
+
+        /**
+         * Get all related artists to specific artist.
+         *
+         * @param string $artist_id
+         * @return array|null - Artists array or null if no artists was returned.
+         */
+        function getRelatedArtists($artist_id){
+            $array = $this->executeCURL("https://api.spotify.com/v1/artists/$artist_id/related-artists", array("Authorization: Bearer $this->accessToken"), "GET");
+
+            if(isset($array['error'])){
+                $this->response['successful'] = false;
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                return null;
+            }else{
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Successfully returned album array.";
+                return $array['artists'];
+            }
+        }
+
+        /**
+         * Get multiple artist arrays.
+         *
+         * @param array $album_ids
+         * @return array|null - Artist array or null if no artists was returned.
+         */
+        function getMultipleArtists($album_ids){
+            $album_ids = implode(",", $album_ids);
+
+            $array = $this->executeCURL("https://api.spotify.com/v1/artists?ids=$album_ids", array("Authorization: Bearer $this->accessToken"), "GET");
+
+            if(isset($array['error'])){
+                $this->response['successful'] = false;
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                return null;
+            }else{
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Successfully returned album arrays.";
+                foreach($array['artists'] as $artist){
+                    if($artist == NULL){
+                        $this->response['status_message'] = "One or more artist ids returned NULL. Use data with caution.";
+                        break;
+                    }
+                }
+                return $array['artists'];
+            }
+        }
 
 
     }

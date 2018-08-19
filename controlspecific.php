@@ -21,17 +21,19 @@
             $spotify->refreshToken = $_SESSION['refresh'];
             $spotify->validUntil = $_SESSION['validuntil'];
             $spotify->checkToken();
+            var_dump($spotify->getMultipleArtists(array("2NqeFgy0ual6Abk5hd0xxi")));
+            //$spotify->setPlaybackVolume(101);
             //echo "devices: "; var_dump($spotify->getAvailableDevices());
             //$spotify->playSong($spotify->getAvailableDevices()[0]['id'], array('spotify:track:44y7WtFqzaCW3j8MTA2pfy'), "spotify:album:3ck3Tj8c6B7TA6ugtaQsyj");
             //$spotify->startPlayBack($spotify->getAvailableDevices()[0]['id']);
-            $spotify->toggleShuffle();
+            //$spotify->setPlaybackPosition(500000);
         }else{
             $spotify->setToken();
-            if($spotify->ajaxResponse['successful']){
+            if($spotify->response['successful']){
                 header("Location: $redirect_uri");
             }
         }
-        var_dump($spotify->ajaxResponse);
+        var_dump($spotify->response);
 
         $_SESSION['token'] = $spotify->accessToken;
         $_SESSION['refresh'] = $spotify->refreshToken;
