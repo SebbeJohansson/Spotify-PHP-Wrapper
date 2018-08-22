@@ -11,6 +11,7 @@
         // Response to be used when using for example ajax.
         public $response = array('successful' => false, 'errors' => array(), 'status_message' => "", 'variables' => array());
 
+        public $clientId;
         public $encryptedSecret;
         public $encodedRedirect;
 
@@ -25,6 +26,7 @@
         protected $lastHTTPCode;
 
         public function __construct($client_id, $client_secret, $redirect_uri, $code = NULL){
+            $this->clientId = $client_id;
             $this->encryptedSecret = base64_encode("$client_id:$client_secret");
             $this->code = $code;
             $this->encodedRedirect = urlencode($redirect_uri);
@@ -40,9 +42,11 @@
          * @param string $redirect_uri - Redirect URI. Has to be in the spotify dashboard.
          * @param array $scopes - Permission scopes for the API process.
          */
-        static function authUser($clientId, $redirect_uri, $scopes = array()){
+        function authUser($clientId, $redirect_uri, $scopes = array("user-read-private", "user-read-email", "streaming", "user-read-birthdate", "user-modify-playback-state", "user-read-playback-state")){
+            $scopes = implode("%20", $scopes);
+
             $encodedRedirect = urlencode($redirect_uri);
-            header("Location: https://accounts.spotify.com/authorize/?client_id=$clientId&response_type=code&redirect_uri=$encodedRedirect&scope=user-read-private%20user-read-email%20streaming%20user-read-birthdate%20user-modify-playback-state%20user-read-playback-state&state=34fFs29kd09");
+            header("Location: https://accounts.spotify.com/authorize/?client_id=$clientId&response_type=code&redirect_uri=$encodedRedirect&scope=$scopes&state=34fFs29kd09");
 
         }
 
@@ -56,6 +60,10 @@
                 $this->response['successful'] = false;
                 $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
                 (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                if($this->lastHTTPCode == 400){
+                    $this->authUser($this->clientId, $this->encodedRedirect);
+                    exit();
+                }
             }else{
                 $this->accessToken = $array['access_token'];
                 $this->refreshToken = $array['refresh_token'];
@@ -120,10 +128,23 @@
                 $this->response['status_message'] = "You do not have permissions to do this. (Wrong scope?)";
             }
 
+            switch($this->lastHTTPCode){
+                case 405:
+                    $this->response['errors'][] = "The endpoint $url does not support $mode.";
+                    break;
+                case 429:
+                    $this->response['status_message'] = "Too many damn requests. STAAAHP.";
+                    break;
+                default:
+                    break;
+            }
+
             if($this->lastHTTPCode == 405){
                 $this->response['errors'][] = "The endpoint $url does not support $mode.";
             }
+            curl_close($curl);
             return $array;
+
         }
 
         /**
@@ -256,13 +277,19 @@
 
             $postfields = json_encode($postfields_array);
             $array = $this->executeCURL("https://api.spotify.com/v1/me/player/play$device_id", array("Authorization: Bearer $this->accessToken", "Content-Type: application/json"), "PUT", $postfields);
-
+            var_dump($array);
             if(isset($array['error'])){
                 $this->response['successful'] = false;
+                $this->response['status_message'] = "An error occurred!";
                 $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
-                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                    (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
 
                 (isset($array['error']['status']) && $array['error']['status'] == 404) ? $this->response['status_message'] = "Device not found." : $array['error'];
+            }elseif ($array == NULL){
+                $this->stopPlayback();
+                $this->response['successful'] = false;
+                $this->response['status_message'] = "Request was invalid.";
+                $this->response['errors'][] = "Something went wrong. Was the context uri wrong? Stopping playback.";
             }else{
                 $this->response['successful'] = true;
                 $songs = implode(" & ", $spotify_uris);
@@ -752,7 +779,6 @@
          */
         function getMultipleArtists($album_ids){
             $album_ids = implode(",", $album_ids);
-
             $array = $this->executeCURL("https://api.spotify.com/v1/artists?ids=$album_ids", array("Authorization: Bearer $this->accessToken"), "GET");
 
             if(isset($array['error'])){
@@ -774,4 +800,236 @@
         }
 
 
+        /* BROWSE FUNCTIONS */
+
+        /**
+         * Get array of category.
+         *
+         * @param string $category_id
+         * @param string $country - Decides what market to pull data from.
+         * @param string $locale - Consists of "languagecode_countrycode". For example "es_MX". Decides what language to pull data in.
+         * @return array|null - Category array or null if no category was returned.
+         */
+        function getCategory($category_id, $country = null, $locale = null){
+            $parameters = null;
+            if($country != null){
+                $parameters = "?country=".$country;
+            }
+            if($locale != null){
+                if($parameters == null){
+                    $parameters = "?locale=".$locale;
+                }else{
+                    $parameters .= "&locale=".$locale;
+                }
+            }
+
+            $array = $this->executeCURL("https://api.spotify.com/v1/browse/categories/$category_id".$parameters, array("Authorization: Bearer $this->accessToken"), "GET");
+
+            if(isset($array['error'])){
+                $this->response['successful'] = false;
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                return null;
+            }else{
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Successfully returned category array.";
+                return $array;
+            }
+        }
+
+        /**
+         * Get all playlists from a certain category.
+         *
+         * @param string $category_id
+         * @param string $country - Country iso. Decides what market to pull data from.
+         * @return array|null - Playlists array or NULL if no playlists was returned.
+         */
+        function getCategoryPlaylists($category_id, $country = null){
+            if($country != null){
+                $country = "?country=".$country;
+            }
+
+            // Initial playlists (first 20).
+            $array = $this->executeCURL("https://api.spotify.com/v1/browse/categories/$category_id/playlists".$country, array("Authorization: Bearer $this->accessToken"), "GET");
+
+            $playlists = array();
+            if(isset($array['error']) || $this->lastHTTPCode == 404){
+                $this->response['successful'] = false;
+                $this->response['status_message'] = "No playlists returned.";
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                return null;
+            }else{
+                $playlists = array_merge($playlists, $array['playlists']['items']);
+                if($array['playlists']['total'] > 20){
+                    $left = $array['playlists']['total'] - 20;
+
+                    while($left > 0){
+                        $array = $this->executeCURL($array['playlists']['next'], array("Authorization: Bearer $this->accessToken"), "GET");
+                        $playlists = array_merge($playlists, $array['playlists']['items']);
+                        $left -= 20;
+                    }
+                }
+
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Successfully returned playlists based on category id $category_id.";
+                if(count($playlists) <= 0){
+                    $this->response['status_message'] = "No playlists was found for category id: $category_id.";
+                }
+                return $playlists;
+            }
+        }
+
+        /**
+         * Get all available categories.
+         *
+         * @param string $country - Country ISO. Decides what market to pull data from.
+         * @param string $locale - Consists of "languagecode_countrycode". For example "es_MX". Decides what language to pull data in.
+         * @return array|null - Categories array or null if no categories was found.
+         */
+        function getCategories($country = null, $locale = null){
+            $parameters = null;
+            if($country != null){
+                $parameters = "?country=".$country;
+            }
+            if($locale != null){
+                if($parameters == null){
+                    $parameters = "?locale=".$locale;
+                }else{
+                    $parameters .= "&locale=".$locale;
+                }
+            }
+
+            // Initial categories (first 20).
+            $array = $this->executeCURL("https://api.spotify.com/v1/browse/categories/".$parameters, array("Authorization: Bearer $this->accessToken"), "GET");
+
+            $categories = array();
+            if(isset($array['error']) || $this->lastHTTPCode == 404){
+                $this->response['successful'] = false;
+                $this->response['status_message'] = "No categories returned.";
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                return null;
+            }else{
+                $categories = array_merge($categories, $array['categories']['items']);
+                if($array['categories']['total'] > 20){
+                    $left = $array['categories']['total'] - 20;
+
+                    while($left > 0){
+                        $array = $this->executeCURL($array['categories']['next'], array("Authorization: Bearer $this->accessToken"), "GET");
+                        $categories = array_merge($categories, $array['categories']['items']);
+                        $left -= 20;
+                    }
+                }
+
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Successfully returned categories.";
+                if(count($categories) <= 0){
+                    $this->response['status_message'] = "No categories was found with the specified parameters.";
+                }
+                return $categories;
+            }
+        }
+
+        /**
+         * @param string $country - Country ISO. Decides what market to pull data from.
+         * @param string $locale - Consists of "languagecode_countrycode". For example "es_MX". Decides what language to pull data in.
+         * @param string $timestamp - Timestamp for what point in time to pull data on. Format: "yyyy-MM-ddTHH:mm:ss"
+         * @return array|null - Playlists array or null if no playlists was found.
+         */
+        function getFeaturedPlaylists($country = null, $locale = null, $timestamp = null){
+            $parameters = null;
+            if($country != null){
+                $parameters = "?country=".$country;
+            }
+            if($locale != null){
+                if($parameters == null){
+                    $parameters = "?locale=".$locale;
+                }else{
+                    $parameters .= "&locale=".$locale;
+                }
+            }
+            if($timestamp != null){
+                if($parameters == null){
+                    $parameters = "?timestamp=".$timestamp;
+                }else{
+                    $parameters .= "&timestamp=".$timestamp;
+                }
+            }
+
+            // Initial playlists (first 20).
+            $array = $this->executeCURL("https://api.spotify.com/v1/browse/featured-playlists/".$parameters, array("Authorization: Bearer $this->accessToken"), "GET");
+
+            $playlists = array();
+            if(isset($array['error']) || $this->lastHTTPCode == 404){
+                $this->response['successful'] = false;
+                $this->response['status_message'] = "No playlists returned.";
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                return null;
+            }else{
+                $playlists = array_merge($playlists, $array['playlists']['items']);
+                if($array['playlists']['total'] > 20){
+                    $left = $array['playlists']['total'] - 20;
+
+                    while($left > 0){
+                        $array = $this->executeCURL($array['playlists']['next'], array("Authorization: Bearer $this->accessToken"), "GET");
+                        $playlists = array_merge($playlists, $array['playlists']['items']);
+                        $left -= 20;
+                    }
+                }
+
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Successfully returned featured playlists.";
+                if(count($playlists) <= 0){
+                    $this->response['status_message'] = "No playlists was found with the specified parameters.";
+                }
+                return $playlists;
+            }
+        }
+
+
+        function getNewReleases($country = null){
+            $parameters = null;
+            if($country != null){
+                $parameters = "?country=".$country;
+            }
+
+            // Initial playlists (first 20).
+            $array = $this->executeCURL("https://api.spotify.com/v1/browse/new-releases/".$parameters, array("Authorization: Bearer $this->accessToken"), "GET");
+
+            $albums = array();
+            if(isset($array['error']) || $this->lastHTTPCode == 404){
+                $this->response['successful'] = false;
+                $this->response['status_message'] = "No albums returned.";
+                $this->response['errors'][] = (isset($array['error']['message'])) ? $array['error']['message'] : $array['error'];
+                (isset($array['error_description'])) ? $this->response['errors'][] = $array['error_description'] : $array['error'];
+                return null;
+            }else{
+                $albums = array_merge($albums, $array['albums']['items']);
+                if($array['albums']['total'] > 20){
+                    $left = $array['albums']['total'] - 20;
+
+                    while($left > 0){
+                        $array = $this->executeCURL($array['albums']['next'], array("Authorization: Bearer $this->accessToken"), "GET");
+                        $albums = array_merge($albums, $array['albums']['items']);
+                        $left -= 20;
+                    }
+                }
+
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Successfully returned new releases.";
+                if(count($albums) <= 0){
+                    $this->response['status_message'] = "No albums was found with the specified parameters.";
+                }
+                return $albums;
+            }
+        }
+
+        // Add recommentation end point at some point.
+
+
+        
+
     }
+
