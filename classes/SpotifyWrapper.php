@@ -932,6 +932,8 @@
         }
 
         /**
+         * Get features playlists.
+         *
          * @param string $country - Country ISO. Decides what market to pull data from.
          * @param string $locale - Consists of "languagecode_countrycode". For example "es_MX". Decides what language to pull data in.
          * @param string $timestamp - Timestamp for what point in time to pull data on. Format: "yyyy-MM-ddTHH:mm:ss"
@@ -989,6 +991,12 @@
         }
 
 
+        /**
+         * Get an array of all new releases.
+         *
+         * @param string $country - Country ISO for which to pull data from.
+         * @return array|null - Recently released albums or null if no albumbs was found.
+         */
         function getNewReleases($country = null){
             $parameters = null;
             if($country != null){
@@ -1026,8 +1034,73 @@
             }
         }
 
-        // Add recommentation end point at some point.
+        /**
+         * Get all avaibale genre seeds.
+         *
+         * @return array - All avaiable genre seeds.
+         */
+        function GetGenreSeeds(){
+            $array = $this->executeCURL("https://api.spotify.com/v1/recommendations/available-genre-seeds", array("Authorization: Bearer $this->accessToken"), "GET");
+            return $array['genres'];
+        }
 
+        /**
+         *  Get recommendations based on seeds and track attributes.
+         *
+         * @param int $limit - Number of tracks to return. Max = 100.
+         * @param bool $return_with_seedobject - Decides if return should include seed object or not.
+         * @param array $seed_artists - Array of artists to generate from.
+         * @param array $seed_tracks - Array of tracks to generate from.
+         * @param array $seed_genres - Array of genres to generate from. (https://developer.spotify.com/console/get-available-genre-seeds/)
+         * @param array $track_attributes - Array of track attributes to filter recommendation on. (https://developer.spotify.com/documentation/web-api/reference/browse/get-recommendations/#tuneable-track-attributes) Add min/mix/traget infront of attribute.
+         * @param string $market - Country ISO to pull recommendations from.
+         * @return array|null - Track recommendation (plus seed object depending on bool) or null if no recommendations was found.
+         */
+        function GetRecommendations($limit = 10, $return_with_seedobject = false, $seed_artists = array(), $seed_tracks = array(), $seed_genres = array(), $track_attributes = array(), $market = null){
+            $seed_count = count($seed_artists)+count($seed_tracks)+count($seed_genres);
+
+            if($seed_count <= 5 && $seed_count > 0){
+                $parameters = "";
+
+                if(!empty($seed_artists)){
+                    $parameters .= "&seed_artists=".implode(",", $seed_artists);
+                }
+                if(!empty($seed_tracks)){
+                    $parameters .= "&seed_tracks=".implode(",", $seed_tracks);
+                }
+                if(!empty($seed_genres)){
+                    $parameters .= "&seed_genres=".implode(",", $seed_genres);
+                }
+                if(isset($market)){
+                    $parameters .= "&market=".$market;
+                }
+
+                foreach($track_attributes as $name => $value){
+                    $parameters .= "&$name=$value";
+                }
+                $array = $this->executeCURL("https://api.spotify.com/v1/recommendations?limit=$limit".$parameters, array("Authorization: Bearer $this->accessToken"), "GET");
+                $this->response['successful'] = true;
+                $this->response['status_message'] = "Successfully returned recommendations for selected seeds.";
+                $this->response['variables']['seed_object'] = $array['seeds'];
+
+                if($return_with_seedobject){
+                    return $array;
+                }else{
+                    return $array['tracks'];
+                }
+
+            }elseif(count($seed_artists)+count($seed_tracks)+count($seed_genres) < 1){
+                $this->response['successful'] = false;
+                $this->response['status_message'] = "No seeds. Retry with between one and 5 seeds..";
+                $this->response['errors'][] = "Invalid request. No seeds in query.";
+                return NULL;
+            }else{
+                $this->response['successful'] = false;
+                $this->response['status_message'] = "Too many seeds. Retry with less.";
+                $this->response['errors'][] = "Invalid request. Request got too many seeds.";
+                return NULL;
+            }
+        }
 
         
 

@@ -21,9 +21,9 @@
             $spotify->refreshToken = $_SESSION['refresh'];
             $spotify->validUntil = $_SESSION['validuntil'];
             $spotify->checkToken();
-            var_dump($spotify->getMultipleArtists(array("2NqeFgy0ual6Abk5hd0xxi")));
-            var_dump($spotify->setCurrentPlayback());
-
+            var_dump($spotify->refreshToken);
+            //var_dump($spotify->setCurrentPlayback());
+            //$spotify->GetRecommendations();
             //var_dump($spotify->getNewReleases());
             //$spotify->setPlaybackVolume(101);
             //echo "devices: "; var_dump($spotify->getAvailableDevices());
@@ -36,7 +36,7 @@
                 header("Location: $redirect_uri");
             }
         }
-        var_dump($spotify->response);
+        //var_dump($spotify->response);
 
         $_SESSION['token'] = $spotify->accessToken;
         $_SESSION['refresh'] = $spotify->refreshToken;
@@ -66,7 +66,7 @@
 
 ?>
 
-<form action="controlspecific.php" method="post">
+<!--form action="controlspecific.php" method="post">
     <input type="text" name="uri"/>
     <input type="submit" value="Submit"/>
-</form>
+</form-->
